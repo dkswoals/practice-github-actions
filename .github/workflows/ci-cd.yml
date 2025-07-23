@@ -2,8 +2,6 @@ name: Spring Boot CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
-  pull_request:
     branches: [ main ]
 
 jobs:
@@ -34,14 +32,6 @@ jobs:
 
       - name: Run tests
         run: ./gradlew test
-
-      - name: Generate test report
-        uses: dorny/test-reporter@v1
-        if: success() || failure()
-        with:
-          name: Gradle Tests
-          path: build/test-results/test/*.xml
-          reporter: java-junit
 
   build-and-deploy:
     needs: test
@@ -80,57 +70,40 @@ jobs:
           echo "jar_file=$JAR_FILE" >> $GITHUB_OUTPUT
           echo "jar_name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
 
-      - name: Setup SSH key and test connection
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          
-          # SSH 연결 테스트 (verbose 모드)
-          echo "Testing SSH connection..."
-          ssh -v -p 2222 -i ~/.ssh/deploy_key -o ConnectTimeout=30 -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org "echo 'SSH connection successful'"
-
       - name: Deploy JAR to server
-        run: |
-          echo "Deploying JAR file: ${{ steps.jar.outputs.jar_name }}"
-          scp -P 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ steps.jar.outputs.jar_file }} \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org:/home/${{ secrets.SERVER_USERNAME }}/app/
-          
-          echo "File transferred successfully"
+        uses: appleboy/scp-action@v1
+        with:
+          host: dkswoalstest.duckdns.org
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 2222
+          source: ${{ steps.jar.outputs.jar_file }}
+          target: /home/${{ secrets.SERVER_USERNAME }}/app/
+          strip_components: 2
 
-      - name: Execute deployment script
-        run: |
-          echo "Starting application deployment..."
-          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org << 'EOF'
-          
-          cd /home/${{ secrets.SERVER_USERNAME }}/app
-          echo "Current directory: $(pwd)"
-          echo "Files in directory: $(ls -la)"
-          
-          # 기존 프로세스 종료
-          echo "Stopping existing processes..."
-          pkill -f 'java -jar' || true
-          sleep 5
-          
-          # 새 애플리케이션 실행
-          echo "Starting new application: ${{ steps.jar.outputs.jar_name }}"
-          nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
-          APP_PID=$!
-          echo "Started with PID: $APP_PID"
-          
-          # 프로세스 확인
-          sleep 10
-          if pgrep -f 'java -jar' > /dev/null; then
-            echo "✅ Application started successfully"
-            echo "Running processes:"
-            pgrep -f 'java -jar'
-          else
-            echo "❌ Application failed to start"
-            echo "Last few lines of log:"
-            tail -20 app.log || echo "No log file found"
-            exit 1
-          fi
-          EOF
+      - name: Deploy application
+        uses: appleboy/ssh-action@v1
+        with:
+          host: dkswoalstest.duckdns.org
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 2222
+          script: |
+            cd /home/${{ secrets.SERVER_USERNAME }}/app
+            
+            # 기존 프로세스 종료
+            pkill -f 'java -jar' || true
+            sleep 5
+            
+            # 새 애플리케이션 실행
+            nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
+            
+            # 프로세스 확인
+            sleep 10
+            if pgrep -f 'java -jar' > /dev/null; then
+              echo "✅ Application deployed successfully"
+            else
+              echo "❌ Application failed to start"
+              tail -20 app.log
+              exit 1
+            fi
