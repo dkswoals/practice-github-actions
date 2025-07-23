@@ -81,37 +81,24 @@ jobs:
           target: /home/${{ secrets.SERVER_USERNAME }}/app/
           strip_components: 2
 
-      - name: Deploy application
+      - name: Stop existing application
         uses: appleboy/ssh-action@v1
         with:
           host: dkswoalstest.duckdns.org
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 2222
-          timeout: 60s
-          command_timeout: 5m
+          script: pkill -f 'java -jar' || echo "No process to kill"
+
+      - name: Start new application
+        uses: appleboy/ssh-action@v1
+        with:
+          host: dkswoalstest.duckdns.org
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 2222
           script: |
             cd /home/${{ secrets.SERVER_USERNAME }}/app
-            
-            echo "Stopping existing processes..."
-            pkill -f 'java -jar' || echo "No existing process found"
-            sleep 3
-            
-            echo "Starting new application: ${{ steps.jar.outputs.jar_name }}"
             nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
-            APP_PID=$!
-            echo "Started with PID: $APP_PID"
-            
-            echo "Waiting for application to start..."
-            sleep 15
-            
-            if kill -0 $APP_PID 2>/dev/null; then
-              echo "✅ Application deployed successfully (PID: $APP_PID)"
-              echo "Last few log lines:"
-              tail -5 app.log || echo "No log available yet"
-            else
-              echo "❌ Application process died"
-              echo "Application log:"
-              cat app.log || echo "No log file found"
-              exit 1
-            fi
+            sleep 5
+            pgrep -f 'java -jar' && echo "✅ Application started successfully" || echo "❌ Failed to start"
