@@ -80,30 +80,57 @@ jobs:
           echo "jar_file=$JAR_FILE" >> $GITHUB_OUTPUT
           echo "jar_name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
 
-      - name: Setup SSH key
+      - name: Setup SSH key and test connection
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p 2222 dkswoalstest.duckdns.org >> ~/.ssh/known_hosts
+          
+          # SSH 연결 테스트 (verbose 모드)
+          echo "Testing SSH connection..."
+          ssh -v -p 2222 -i ~/.ssh/deploy_key -o ConnectTimeout=30 -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org "echo 'SSH connection successful'"
 
       - name: Deploy JAR to server
         run: |
-          scp -P 2222 -i ~/.ssh/deploy_key \
+          echo "Deploying JAR file: ${{ steps.jar.outputs.jar_name }}"
+          scp -P 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             ${{ steps.jar.outputs.jar_file }} \
             ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org:/home/${{ secrets.SERVER_USERNAME }}/app/
+          
+          echo "File transferred successfully"
 
       - name: Execute deployment script
         run: |
-          ssh -p 2222 -i ~/.ssh/deploy_key \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
-            "cd /home/${{ secrets.SERVER_USERNAME }}/app && \
-             pkill -f 'java -jar' || true && \
-             sleep 5 && \
-             nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 & \
-             sleep 10 && \
-             if pgrep -f 'java -jar' > /dev/null; then \
-               echo 'Application started successfully'; \
-             else \
-               echo 'Application failed to start' && exit 1; \
-             fi"
+          echo "Starting application deployment..."
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org << 'EOF'
+          
+          cd /home/${{ secrets.SERVER_USERNAME }}/app
+          echo "Current directory: $(pwd)"
+          echo "Files in directory: $(ls -la)"
+          
+          # 기존 프로세스 종료
+          echo "Stopping existing processes..."
+          pkill -f 'java -jar' || true
+          sleep 5
+          
+          # 새 애플리케이션 실행
+          echo "Starting new application: ${{ steps.jar.outputs.jar_name }}"
+          nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
+          APP_PID=$!
+          echo "Started with PID: $APP_PID"
+          
+          # 프로세스 확인
+          sleep 10
+          if pgrep -f 'java -jar' > /dev/null; then
+            echo "✅ Application started successfully"
+            echo "Running processes:"
+            pgrep -f 'java -jar'
+          else
+            echo "❌ Application failed to start"
+            echo "Last few lines of log:"
+            tail -20 app.log || echo "No log file found"
+            exit 1
+          fi
+          EOF
