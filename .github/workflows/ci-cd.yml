@@ -70,17 +70,6 @@ jobs:
           echo "jar_file=$JAR_FILE" >> $GITHUB_OUTPUT
           echo "jar_name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
 
-      - name: Deploy JAR to server
-        uses: appleboy/scp-action@v1
-        with:
-          host: dkswoalstest.duckdns.org
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          source: ${{ steps.jar.outputs.jar_file }}
-          target: /home/${{ secrets.SERVER_USERNAME }}/app/
-          strip_components: 2
-
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
@@ -89,21 +78,31 @@ jobs:
 
       - name: Deploy to server
         run: |
+          # JAR 파일 전송
+          scp -P 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ steps.jar.outputs.jar_file }} \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org:/home/${{ secrets.SERVER_USERNAME }}/app/
+          
+          # 애플리케이션 배포
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org << 'EOF'
+          
+          cd /home/${{ secrets.SERVER_USERNAME }}/app
+          
           # 기존 프로세스 종료
-          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
-            "pkill -f 'java -jar' || echo 'No process to kill'"
-          
-          sleep 3
-          
-          # 새 애플리케이션 시작
-          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
-            "cd /home/${{ secrets.SERVER_USERNAME }}/app && nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &"
-          
+          pkill -f 'java -jar' || true
           sleep 5
           
-          # 실행 확인
-          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
-            "pgrep -f 'java -jar' && echo '✅ Application started successfully' || echo '❌ Failed to start'"
+          # 새 애플리케이션 실행
+          nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
+          
+          # 프로세스 확인
+          sleep 10
+          if pgrep -f 'java -jar' > /dev/null; then
+            echo "✅ Application deployed successfully"
+          else
+            echo "❌ Application failed to start"
+            tail -20 app.log
+            exit 1
+          fi
+          EOF
