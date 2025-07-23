@@ -46,7 +46,7 @@ jobs:
   build-and-deploy:
     needs: test
     runs-on: ubuntu-latest
-    #if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
@@ -80,39 +80,30 @@ jobs:
           echo "jar_file=$JAR_FILE" >> $GITHUB_OUTPUT
           echo "jar_name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
 
-      - name: Deploy to server
-        uses: appleboy/scp-action@v0.1.8
-        with:
-          host: dkswoalstest.duckdns.org
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          source: ${{ steps.jar.outputs.jar_file }}
-          target: "/home/${{ secrets.SERVER_USERNAME }}/app"
-          strip_components: 2
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p 2222 dkswoalstest.duckdns.org >> ~/.ssh/known_hosts
+
+      - name: Deploy JAR to server
+        run: |
+          scp -P 2222 -i ~/.ssh/deploy_key \
+            ${{ steps.jar.outputs.jar_file }} \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org:/home/${{ secrets.SERVER_USERNAME }}/app/
 
       - name: Execute deployment script
-        uses: appleboy/ssh-action@v1.1.0
-        with:
-          host: dkswoalstest.duckdns.org
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          script: |
-            cd /home/${{ secrets.SERVER_USERNAME }}/app
-            
-            # 기존 프로세스 종료
-            pkill -f "java -jar" || true
-            sleep 5
-            
-            # 새 애플리케이션 실행
-            nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
-            
-            # 잠시 대기 후 프로세스 확인
-            sleep 10
-            if pgrep -f "java -jar" > /dev/null; then
-              echo "Application started successfully"
-            else
-              echo "Application failed to start"
-              exit 1
-            fi
+        run: |
+          ssh -p 2222 -i ~/.ssh/deploy_key \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
+            "cd /home/${{ secrets.SERVER_USERNAME }}/app && \
+             pkill -f 'java -jar' || true && \
+             sleep 5 && \
+             nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 & \
+             sleep 10 && \
+             if pgrep -f 'java -jar' > /dev/null; then \
+               echo 'Application started successfully'; \
+             else \
+               echo 'Application failed to start' && exit 1; \
+             fi"
