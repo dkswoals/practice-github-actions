@@ -88,22 +88,30 @@ jobs:
           username: ${{ secrets.SERVER_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 2222
+          timeout: 60s
+          command_timeout: 5m
           script: |
             cd /home/${{ secrets.SERVER_USERNAME }}/app
             
-            # 기존 프로세스 종료
-            pkill -f 'java -jar' || true
-            sleep 5
+            echo "Stopping existing processes..."
+            pkill -f 'java -jar' || echo "No existing process found"
+            sleep 3
             
-            # 새 애플리케이션 실행
+            echo "Starting new application: ${{ steps.jar.outputs.jar_name }}"
             nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
+            APP_PID=$!
+            echo "Started with PID: $APP_PID"
             
-            # 프로세스 확인
-            sleep 10
-            if pgrep -f 'java -jar' > /dev/null; then
-              echo "✅ Application deployed successfully"
+            echo "Waiting for application to start..."
+            sleep 15
+            
+            if kill -0 $APP_PID 2>/dev/null; then
+              echo "✅ Application deployed successfully (PID: $APP_PID)"
+              echo "Last few log lines:"
+              tail -5 app.log || echo "No log available yet"
             else
-              echo "❌ Application failed to start"
-              tail -20 app.log
+              echo "❌ Application process died"
+              echo "Application log:"
+              cat app.log || echo "No log file found"
               exit 1
             fi
