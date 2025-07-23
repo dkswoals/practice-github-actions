@@ -2,7 +2,7 @@ name: Spring Boot CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
 
@@ -46,7 +46,7 @@ jobs:
   build-and-deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    #if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
           echo "jar_name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
 
       - name: Deploy to server
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v0.1.8
         with:
           host: dkswoalstest.duckdns.org
           username: ${{ secrets.SERVER_USERNAME }}
@@ -92,7 +92,7 @@ jobs:
           strip_components: 2
 
       - name: Execute deployment script
-        uses: appleboy/ssh-action@v0.1.11
+        uses: appleboy/ssh-action@v1.1.0
         with:
           host: dkswoalstest.duckdns.org
           username: ${{ secrets.SERVER_USERNAME }}
