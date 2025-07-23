@@ -81,24 +81,29 @@ jobs:
           target: /home/${{ secrets.SERVER_USERNAME }}/app/
           strip_components: 2
 
-      - name: Stop existing application
-        uses: appleboy/ssh-action@v1
-        with:
-          host: dkswoalstest.duckdns.org
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          script: pkill -f 'java -jar' || echo "No process to kill"
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
 
-      - name: Start new application
-        uses: appleboy/ssh-action@v1
-        with:
-          host: dkswoalstest.duckdns.org
-          username: ${{ secrets.SERVER_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 2222
-          script: |
-            cd /home/${{ secrets.SERVER_USERNAME }}/app
-            nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &
-            sleep 5
-            pgrep -f 'java -jar' && echo "✅ Application started successfully" || echo "❌ Failed to start"
+      - name: Deploy to server
+        run: |
+          # 기존 프로세스 종료
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
+            "pkill -f 'java -jar' || echo 'No process to kill'"
+          
+          sleep 3
+          
+          # 새 애플리케이션 시작
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
+            "cd /home/${{ secrets.SERVER_USERNAME }}/app && nohup java -jar ${{ steps.jar.outputs.jar_name }} > app.log 2>&1 &"
+          
+          sleep 5
+          
+          # 실행 확인
+          ssh -p 2222 -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SERVER_USERNAME }}@dkswoalstest.duckdns.org \
+            "pgrep -f 'java -jar' && echo '✅ Application started successfully' || echo '❌ Failed to start'"
